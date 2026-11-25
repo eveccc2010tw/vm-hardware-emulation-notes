@@ -1,0 +1,76 @@
+# Proxmox VE /etc/pve/qemu-server/<VMID>.conf —— 硬體偽裝設定範例（去敏）
+#
+# 來源：一台實際在用的 Windows 10 逆向分析工作機（2026-11-14 擷取的現役設定）。
+# 序號、UUID、MAC、磁碟與儲存名稱已換成範例值，其餘結構與數值取自原設定。
+# 對應原理說明：README.md 第 3 節；逐行對照表見 README.md 第 4 節。
+#
+# 使用方式：先以 `qm create` 建一台 VM，再用 `qm set --` 套上本檔內容，
+# 或直接編輯 /etc/pve/qemu-server/<VMID>.conf。args: 一行必須保持單行。
+
+# --- 來賓痕跡：關掉 QEMU 自己的裝置 -----------------------------------------
+# agent: 不建立 virtio-serial 通道 → 來賓不會看到 QEMU guest agent 的序列埠
+agent: 0
+# balloon: 不建立 virtio-balloon（PCI 1af4:1002）
+balloon: 0
+# hotplug: 關閉 PCI 熱插拔，避免出現熱插拔控制器與相關 ACPI 物件
+hotplug: 0
+
+# --- CPUID hypervisor bit ----------------------------------------------------
+# hidden=1 讓 QEMU 以 kvm=off 啟動 → KVM 不再設定 CPUID.1:ECX[31]、
+# 也不再回報 0x40000000 起的 "KVMKVMKVM" hypervisor vendor leaf。
+cpu: host,hidden=1
+
+# --- QEMU 命令列：SMBIOS / ACPI OEM / 裝置字串 / CPU 功能 ---------------------
+# 這一行是本方案的核心，逐段說明：
+#   -machine x-oem-id=ALASKA,x-oem-table-id=ALASKA
+#       ACPI 表頭（RSDT/XSDT/DSDT/SSDT）的 OEM ID 與 OEM Table ID。
+#       QEMU 預設是 "BOCHS " / "BXPC"，是最好抓的線索之一。
+#   -smbios type=0,...  BIOS 廠商／版本／日期（QEMU 預設 vendor=SeaBIOS）
+#   -smbios type=2,...  主機板廠商／型號／版本／序號
+#   -smbios type=3,...  機殼廠商／版本／序號
+#       注意：type=1 由下面 smbios1: 產生，所以這裡刻意不重複指定 type=1。
+#   -set device.sata0.model=KINGSTON_SA400S37120G
+#       SATA 硬碟回報的型號（ATA IDENTIFY DEVICE word 27-46）。
+#   -set device.vga.romfile=/root/stealth/vgabios-stdvga.bin
+#       stdvga 換成改過 OEM 字串的 SeaBIOS option ROM（見 scripts/patch-vgabios.py）。
+#   -cpu host,...,kvm=off,...   與 cpu: 的 hidden=1 同時生效（雙保險），
+#       並在結尾用第二個 -cpu 覆蓋掉 vmx：QEMU 以最後一個 -cpu 為準。
+args: -machine x-oem-id=ALASKA,x-oem-table-id=ALASKA -smbios type=0,vendor=Dell,version=1.18.1,date=11/15/2024,release=1.18 -smbios type=2,manufacturer=Dell,product=0K6WF6,version=A09,serial=EXAMPLE -smbios type=3,manufacturer=Dell,version=A09,serial=EXAMPLE -set device.sata0.model=KINGSTON_SA400S37120G -set device.vga.romfile=/root/stealth/vgabios-stdvga.bin -cpu host,hv_ipi,hv_relaxed,hv_reset,hv_runtime,hv_spinlocks=0x1fff,hv_stimer,hv_synic,hv_time,hv_vapic,hv_vpindex,kvm=off,+kvm_pv_eoi,+kvm_pv_unhalt,-vmx-mbec,-vmx
+
+# --- 開機與資源 --------------------------------------------------------------
+boot: order=sata0
+cores: 4
+sockets: 2
+memory: 16384
+# numa: 0 → 不給來賓 NUMA 拓撲，避免多節點 CPU 樹（實體單插槽機也不會有）
+numa: 0
+# ostype: 影響 PVE 產生的預設裝置與驅動提示，win10 才會給 Windows 相容的預設值
+ostype: win10
+localtime: 1
+# 名稱只是標籤，樣本讀不到；沿用原機命名方便對照
+name: WIN10-RE
+
+# --- 儲存：SATA 而非 virtio-scsi ---------------------------------------------
+# virtio 裝置的 PCI vendor 是 1af4（Red Hat），驅動、SetupAPI log、Enum\PCI 都會留下痕跡。
+# 改成 SATA（i440fx 上是 PIIX3/IDE，AHCI 模式）後，來賓看到的是標準 AHCI 控制器。
+# serial= 會直接寫進 IDENTIFY DEVICE 的序號欄位（真實硬碟一定有）。
+# ssd=1 讓 Windows 把它當 SSD（回報 non-rotating、支援 TRIM）。
+sata0: local-lvm:vm-DISK,serial=EXAMPLE000000001,size=120G,ssd=1
+
+# --- 網卡：e1000e 而非 virtio-net --------------------------------------------
+# e1000e 模擬 Intel 82574L（PCI 8086:10d3），驅動是 Windows 內建的 e1d68x64。
+# 注意：BC:24:11 是 Proxmox VE 註冊的 OUI，本身就是線索；
+#       正式使用請換成目標機型網卡的 OUI，並確認同網段沒有重複。
+net0: e1000e=BC:24:11:00:00:01,bridge=vmbr0,firewall=1
+net1: e1000e=BC:24:11:00:00:02,bridge=vmbr0,firewall=1
+
+# --- SMBIOS type 1（系統資訊） -----------------------------------------------
+# 這裡的值 Windows 透過 Win32_ComputerSystem / Win32_ComputerSystemProduct 就讀得到。
+# base64=1 是 PVE 的寫法：值以 base64 表示，避免逗號與非 ASCII 字元破壞設定檔格式。
+#   manufacturer = Dell Inc.        product = PowerEdge R750     version = 1.0
+#   serial       = EXAMPLE          sku     = 090E              family  = PowerEdge
+# uuid：原機的 UUID 已移除，這是新產生的範例值。
+smbios1: uuid=146f265a-7573-4b23-ae97-d8d0bc7f986c,manufacturer=RGVsbCBJbmMu,product=UG93ZXJFZGdlIFI3NTA=,version=MS4w,serial=RVhBTVBMRQ==,sku=MDkwRQ==,family=UG93ZXJFZGdl,base64=1
+
+# tablet: 1 是 PVE Console 用的 USB 平板指標，對樣本無影響，保留原值
+tablet: 1

@@ -1,0 +1,11 @@
+# /etc/pve/qemu-server/<VMID>.conf 的 args: 那一行（去敏範例）
+#
+# 這是本方案唯一必須手寫的長行；其餘欄位都是 PVE 原生設定。
+# 逐段說明見 README.md 第 3 節，完整設定見 config/230.conf.example。
+#
+# 要注意的三點：
+#   1. args 必須是單行，PVE 不會幫你折行，換行後 qm 會解析失敗。
+#   2. -smbios type=1 不要出現在這裡，type 1 由 smbios1: 產生。
+#   3. 結尾的 -cpu 會覆蓋 PVE 產生的 -cpu，所以 hv_* 功能必須一併重寫。
+
+args: -machine x-oem-id=ALASKA,x-oem-table-id=ALASKA -smbios type=0,vendor=Dell,version=1.18.1,date=11/15/2024,release=1.18 -smbios type=2,manufacturer=Dell,product=0K6WF6,version=A09,serial=EXAMPLE -smbios type=3,manufacturer=Dell,version=A09,serial=EXAMPLE -set device.sata0.model=KINGSTON_SA400S37120G -set device.vga.romfile=/root/stealth/vgabios-stdvga.bin -cpu host,hv_ipi,hv_relaxed,hv_reset,hv_runtime,hv_spinlocks=0x1fff,hv_stimer,hv_synic,hv_time,hv_vapic,hv_vpindex,kvm=off,+kvm_pv_eoi,+kvm_pv_unhalt,-vmx-mbec,-vmx
